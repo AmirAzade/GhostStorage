@@ -1,10 +1,11 @@
-from django.shortcuts import render, HttpResponse
+from django.shortcuts import render, HttpResponse, get_object_or_404
 from django.http import StreamingHttpResponse
 from .client import get_client
 from django.conf import settings
 import mimetypes
 from django.views.decorators.csrf import csrf_exempt
 from telethon.tl.types import DocumentAttributeFilename
+from .models import FileMap
 
 async def index(request):
     """Renders the HTML page with the upload form."""
@@ -12,56 +13,73 @@ async def index(request):
 
 @csrf_exempt
 async def upload_file(request):
-    """Handles the file upload via AJAX."""
+    """Handles upload and saves metadata to DB."""
     if request.method == 'POST' and request.FILES.get('file'):
         file_obj = request.FILES['file']
-        
-        # Read file content into memory
         content = file_obj.read()
         
         client = await get_client()
         
         try:
-            # Upload to Telegram
+            # 1. Upload to Telegram
             message = await client.send_file(
                 settings.TG_CHANNEL_ID,
                 file=content,
                 caption=file_obj.name,
                 force_document=True,
-                attributes=[
-                    DocumentAttributeFilename(file_name=file_obj.name)
-                ]
+                attributes=[DocumentAttributeFilename(file_name=file_obj.name)]
             )
-            # Return a simple HTML snippet to display in the result box
+
+            # 2. Save Mapping to Database (Sync operation inside Async view)
+            # We use a wrapper or simple ORM call since simple inserts are fast
+            file_map = await FileMap.objects.acreate(
+                message_id=message.id,
+                file_name=file_obj.name,
+                file_size=file_obj.size
+            )
+            
+            # 3. Return the UUID link
+            download_url = f"/download/{file_map.uuid}/"
+            
             return HttpResponse(f"""
                 <div style="color: green; margin-bottom: 10px;"><b>Upload Successful!</b></div>
-                File Name: {file_obj.name}<br>
-                Size: {file_obj.size} bytes<br>
+                File: {file_obj.name}<br>
+                UUID: {file_map.uuid}<br>
                 <br>
-                <a href="/download/{message.id}/" class="download-btn" target="_blank">Download File</a>
+                <a href="{download_url}" class="download-btn" target="_blank">Download File</a>
             """)
         except Exception as e:
             return HttpResponse(f"<span style='color:red'>Error: {str(e)}</span>", status=500)
             
     return HttpResponse("No file provided", status=400)
 
-async def download_file(request, msg_id):
-    """Streams the file from Telegram to the user."""
-    client = await get_client()
+async def download_file(request, file_uuid):
+    """Retrieves file ID from DB using UUID and streams it."""
+    
+    # 1. Look up the mapping in the Database
+    # We use 'aget' for async retrieval
     try:
-        message = await client.get_messages(settings.TG_CHANNEL_ID, ids=int(msg_id))
+        file_entry = await FileMap.objects.aget(uuid=file_uuid)
+    except FileMap.DoesNotExist:
+        return HttpResponse("File link invalid or expired", status=404)
+
+    client = await get_client()
+    
+    # 2. Use the hidden message_id from the DB
+    try:
+        message = await client.get_messages(settings.TG_CHANNEL_ID, ids=file_entry.message_id)
     except ValueError:
-        return HttpResponse("Invalid Message ID")
+        return HttpResponse("Message not found in Telegram")
 
     if not message or not message.file:
-        return HttpResponse("File not found in Telegram channel")
+        return HttpResponse("File missing on Telegram server")
 
-    file_name = message.file.name or f"file_{msg_id}"
-    file_size = message.file.size
+    # 3. Stream the file
+    file_name = file_entry.file_name
+    file_size = file_entry.file_size
     mime_type, _ = mimetypes.guess_type(file_name)
 
     async def file_iterator():
-        # iter_download yields chunks directly to the response stream
         async for chunk in client.iter_download(message.media):
             yield chunk
 
