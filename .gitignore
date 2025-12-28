@@ -12,3 +12,6 @@ db.sqlite3
 # Telegram Sessions (IMPORTANT)
 *.session
 *.session-journal
+
+# django SECRET_KEY
+.django_secret
