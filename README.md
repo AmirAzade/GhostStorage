@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="resources/logo.jpg" alt="logo" width="140" height="140" />
+<img src="resources/logo.png" alt="logo" width="140" height="140" />
 
 <h1>👻 GhostStorage</h1>
 <h3>Unlimited Cloud Storage using Telegram as a Backend</h3>
@@ -17,7 +17,7 @@
 
 ## ⚡ Features
 
-- **Unlimited Cloud Storage**: Uses Telegram Channels as a database to store files of unlimited size and quantity.
+- **Unlimited Cloud Storage**: Uses Telegram Channels as a storage backend to host files of unlimited quantity.
 
 - **Zero Disk Usage**: Files are streamed chunk-by-chunk from the user → RAM → Telegram. Nothing is ever saved to the server's disk.
 
